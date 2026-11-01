@@ -1,0 +1,11 @@
+# what Paper downloads on first boot, and run output
+rig/stage/repro263/cache/
+rig/stage/repro263/libraries/
+rig/stage/repro263/versions/
+rig/stage/repro263/paper.jar
+rig/stage/fuzz/out/*
+!rig/stage/fuzz/out/.keep
+__pycache__/
+/out/
+/out-*/
+/mc-cache/

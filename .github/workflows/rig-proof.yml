@@ -1,0 +1,102 @@
+# One-off proof that GitHub's free runners reproduce the PC rig before CI is trusted with anything. It reruns the A/B
+# the PC ran on 11-01 with the PC's exact jars: stock 2.0 eb4c657 vs PR #2789 on eb4c657, the same 120 random scenarios
+# (fuzz/suite.py, seeds 7000000-7000119, 2 runs), 2 vanilla 26.3 clients per runner inside rig/Dockerfile. Seeds that
+# differ get 8 more runs on each build, then fuzz/suite_diff.py, and every seed is lined up against the PC's own
+# results in rig/baseline. The PC's verdict: 4 new checks (7000092 and 7000100, GroundSpoof + Simulation, 10/10 vs
+# 0/10), 0 gone, 7000026 noisy. Runs on every push to this branch.
+name: rig-proof
+on:
+  push:
+    branches: [rig]
+permissions:
+  contents: read
+env:
+  STOCK: grimac-bukkit-2.3.75-eb4c657-STOCK.jar
+  PR: grimac-bukkit-2.3.75-pr2789-085ac5e-on-eb4c657.jar
+  PAPER_SHA256: a0a58f532f08054ea92eb916d3edb6ed3c86429d77175317304f6e995cce9968
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [stock, pr2789]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rig-setup
+      - name: this shard's seeds
+        run: |
+          JAR=$([ "${{ matrix.build }}" = stock ] && echo "$STOCK" || echo "$PR")
+          SEEDS=$(python3 -c "k = ${{ matrix.shard }}; print(','.join(str(7000000 + i) for i in range(120) if i % 10 == k))")
+          docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache:/cache/mc" -v "$PWD/out:/out" grim-ci \
+            bash /run.sh "$JAR" ${{ matrix.build }} "--seeds $SEEDS --runs 2 --clients 1,2"
+      - name: no kept result may come from a client hitch
+        run: python3 rig/ci_gate.py out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'suite-${{ matrix.build }}-${{ matrix.shard }}', path: out/}
+
+  differing:
+    needs: suite
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    outputs:
+      seeds: ${{ steps.d.outputs.seeds }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'suite-*', path: shards}
+      - id: d
+        run: |
+          python3 rig/merge_shards.py shards rig/stage/fuzz/out stock pr2789
+          cd rig/stage && echo "seeds=$(python3 -I fuzz/suite_diff.py stock pr2789 --differing | tail -1)" >> "$GITHUB_OUTPUT"
+
+  confirm:
+    needs: differing
+    if: ${{ !cancelled() && needs.differing.outputs.seeds != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [stock, pr2789]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rig-setup
+      - name: 8 more runs of every seed that differed
+        run: |
+          JAR=$([ "${{ matrix.build }}" = stock ] && echo "$STOCK" || echo "$PR")
+          docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache:/cache/mc" -v "$PWD/out:/out" grim-ci \
+            bash /run.sh "$JAR" ${{ matrix.build }}-confirm "--seeds ${{ needs.differing.outputs.seeds }} --runs 8 --clients 1,2"
+      - run: python3 rig/ci_gate.py out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'confirm-${{ matrix.build }}', path: out/}
+
+  verdict:
+    needs: [suite, confirm]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'suite-*', path: shards}
+      - uses: actions/download-artifact@v4
+        continue-on-error: true    # no confirm artifacts when no seed differed
+        with: {pattern: 'confirm-*', path: confirms}
+      - name: CI's verdict, then CI against the PC seed by seed
+        run: |
+          python3 rig/merge_shards.py shards rig/stage/fuzz/out stock pr2789
+          for b in stock pr2789; do
+            [ -f "confirms/confirm-$b/suite-$b-confirm.json" ] && cp "confirms/confirm-$b/suite-$b-confirm.json" rig/stage/fuzz/out/
+          done
+          cd rig/stage
+          python3 -I fuzz/suite_diff.py stock pr2789 --title "PR #2789 on eb4c657, CI proof (20 GitHub runners)"
+          { cat fuzz/out/suite-diff-pr2789.md; echo; echo '## CI vs the PC, seed by seed'; echo; echo '```'
+            python3 ../compare.py fuzz/out/suite-stock.json ../baseline/suite-stock-eb4c657.json ../baseline/suite-stock-eb4c657-confirm-pr2789-085ac5e.json | tail -2
+            python3 ../compare.py fuzz/out/suite-pr2789.json ../baseline/suite-pr2789-085ac5e.json ../baseline/suite-pr2789-085ac5e-confirm-pr2789-085ac5e.json | tail -2
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: {name: verdict, path: rig/stage/fuzz/out/}
