@@ -8,7 +8,9 @@ so a scenario replays the same way every time. A vanilla client can't cheat, so 
 - `rig/run.sh`: one job, a fresh server with the given Grim jar, 2 clients, `fuzz/suite.py`, then a tick-pacing probe.
 - `rig/ci_gate.py`: fails a job if any kept result came from a client hitch (a run that tripped Grim's Timer check).
 - `.github/workflows/rig-proof.yml`: the A/B the PC rig ran on 2026-11-01 (stock 2.0 eb4c657 vs PR #2789), rerun here
-  and lined up seed by seed against the PC's results in `rig/baseline`.
+  and lined up seed by seed against the PC's results in `rig/baseline`. Same verdict as the PC.
+- `.github/workflows/rig-pr.yml`: the same A/B for any PR, with both jars built here by `rig/build_grim.sh` on the PC's
+  JDKs. `gh workflow run rig-pr.yml --repo aidanvalero/Grim --ref rig -f pr=<number>`
 
 Two things a GPU-less 26.3 client needs: `SDL_VIDEO_FORCE_EGL=1` (26.3 asks for an sRGB-capable framebuffer and
 Xvfb's GLX has no sRGB visual), and Netty on NIO for server and clients, like the Windows rig.

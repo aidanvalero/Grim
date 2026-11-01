@@ -1,0 +1,144 @@
+# Any GrimAnticheat/Grim PR on real vanilla clients. Builds stock and the PR inside rig/Dockerfile with the PC's JDKs
+# (rig/build_grim.sh, the way cobweb/pr-check.ps1 builds: the PR's own diff applied on base), then the same A/B as
+# rig-proof: the 120 suite seeds on both builds over 20 runners, 8 more runs of any seed that differs, fuzz/suite_diff.py.
+#   gh workflow run rig-pr.yml --repo aidanvalero/Grim --ref rig -f pr=<number> [-f base=2.0] [-f pr_sha=<sha>]
+# The push that adds or changes the build is its own proof: it rebuilds the PC's 11-01 jars (stock eb4c657, PR #2789 at
+# 085ac5e), fails unless every class is byte-identical to them (rig/jar_diff.py), and runs the A/B on what it built.
+name: rig-pr
+on:
+  push:
+    branches: [rig]
+    paths: ['.github/workflows/rig-pr.yml', 'rig/build_grim.sh', 'rig/Dockerfile']
+  workflow_dispatch:
+    inputs:
+      pr: {description: 'GrimAnticheat/Grim PR number', required: true}
+      base: {description: 'Grim commit or branch to apply it on', default: '2.0'}
+      pr_sha: {description: 'pin the PR head (blank = its current head)', default: ''}
+      runs: {description: 'runs per seed', default: '2'}
+permissions:
+  contents: read
+env:
+  PROOF: ${{ github.event_name == 'push' }}
+  PR: ${{ github.event_name == 'push' && '2789' || inputs.pr }}
+  BASE: ${{ github.event_name == 'push' && 'eb4c657ca17f60ae89c84c6c13ff6eb2505e4917' || inputs.base }}
+  PR_SHA: ${{ github.event_name == 'push' && '085ac5e89df0751cd039021b4b5ad6682a8e2fbd' || inputs.pr_sha }}
+  RUNS: ${{ inputs.runs || '2' }}
+  PAPER_SHA256: a0a58f532f08054ea92eb916d3edb6ed3c86429d77175317304f6e995cce9968
+jobs:
+  jars:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: {repository: GrimAnticheat/Grim, ref: 2.0, path: grim, fetch-depth: 0, persist-credentials: false}
+      - uses: actions/cache@v4
+        with: {path: gradle-home, key: 'gradle-${{ github.run_id }}', restore-keys: gradle-}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: {context: rig, tags: grim-ci, load: true, cache-from: type=gha, cache-to: 'type=gha,mode=max,ignore-error=true'}
+      - name: build stock and the PR with the PC's JDKs
+        run: |
+          mkdir -p jars gradle-home
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e GRADLE_USER_HOME=/gradle-home \
+            -v "$PWD/grim:/grim" -v "$PWD/gradle-home:/gradle-home" -v "$PWD/jars:/out" grim-ci \
+            bash /build_grim.sh /grim /out "$BASE" "$PR" "$PR_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: proof, CI's jars against the PC's
+        if: env.PROOF == 'true'
+        run: |
+          python3 rig/jar_diff.py jars/stock.jar rig/stage/grim-jars/grimac-bukkit-2.3.75-eb4c657-STOCK.jar | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 rig/jar_diff.py jars/pr.jar rig/stage/grim-jars/grimac-bukkit-2.3.75-pr2789-085ac5e-on-eb4c657.jar | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: {name: jars, path: jars/}
+
+  suite:
+    needs: jars
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [stock, pr]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rig-setup
+      - uses: actions/download-artifact@v4
+        with: {name: jars, path: rig/stage/grim-jars}
+      - name: this shard's seeds
+        run: |
+          SEEDS=$(python3 -c "k = ${{ matrix.shard }}; print(','.join(str(7000000 + i) for i in range(120) if i % 10 == k))")
+          docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache:/cache/mc" -v "$PWD/out:/out" grim-ci \
+            bash /run.sh ${{ matrix.build }}.jar ${{ matrix.build }} "--seeds $SEEDS --runs $RUNS --clients 1,2"
+      - name: no kept result may come from a client hitch
+        run: python3 rig/ci_gate.py out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'suite-${{ matrix.build }}-${{ matrix.shard }}', path: out/}
+
+  differing:
+    needs: suite
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    outputs:
+      seeds: ${{ steps.d.outputs.seeds }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'suite-*', path: shards}
+      - id: d
+        run: |
+          python3 rig/merge_shards.py shards rig/stage/fuzz/out stock pr
+          cd rig/stage && echo "seeds=$(python3 -I fuzz/suite_diff.py stock pr --differing | tail -1)" >> "$GITHUB_OUTPUT"
+
+  confirm:
+    needs: differing
+    if: ${{ !cancelled() && needs.differing.outputs.seeds != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [stock, pr]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rig-setup
+      - uses: actions/download-artifact@v4
+        with: {name: jars, path: rig/stage/grim-jars}
+      - name: 8 more runs of every seed that differed
+        run: |
+          docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache:/cache/mc" -v "$PWD/out:/out" grim-ci \
+            bash /run.sh ${{ matrix.build }}.jar ${{ matrix.build }}-confirm "--seeds ${{ needs.differing.outputs.seeds }} --runs 8 --clients 1,2"
+      - run: python3 rig/ci_gate.py out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'confirm-${{ matrix.build }}', path: out/}
+
+  verdict:
+    needs: [jars, suite, confirm]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'suite-*', path: shards}
+      - uses: actions/download-artifact@v4
+        continue-on-error: true    # no confirm artifacts when no seed differed
+        with: {pattern: 'confirm-*', path: confirms}
+      - name: the verdict
+        run: |
+          python3 rig/merge_shards.py shards rig/stage/fuzz/out stock pr
+          for b in stock pr; do
+            [ -f "confirms/confirm-$b/suite-$b-confirm.json" ] && cp "confirms/confirm-$b/suite-$b-confirm.json" rig/stage/fuzz/out/
+          done
+          cd rig/stage
+          python3 -I fuzz/suite_diff.py stock pr --title "PR #$PR on $BASE (CI, 20 runners)"
+          cat fuzz/out/suite-diff-pr.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PROOF" = true ]; then
+            { echo; echo '## CI vs the PC, seed by seed'; echo; echo '```'
+              python3 ../compare.py fuzz/out/suite-stock.json ../baseline/suite-stock-eb4c657.json ../baseline/suite-stock-eb4c657-confirm-pr2789-085ac5e.json | tail -2
+              python3 ../compare.py fuzz/out/suite-pr.json ../baseline/suite-pr2789-085ac5e.json ../baseline/suite-pr2789-085ac5e-confirm-pr2789-085ac5e.json | tail -2
+              echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        with: {name: verdict, path: rig/stage/fuzz/out/}

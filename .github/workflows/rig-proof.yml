@@ -3,11 +3,12 @@
 # (fuzz/suite.py, seeds 7000000-7000119, 2 runs), 2 vanilla 26.3 clients per runner inside rig/Dockerfile. Seeds that
 # differ get 8 more runs on each build, then fuzz/suite_diff.py, and every seed is lined up against the PC's own
 # results in rig/baseline. The PC's verdict: 4 new checks (7000092 and 7000100, GroundSpoof + Simulation, 10/10 vs
-# 0/10), 0 gone, 7000026 noisy. Runs on every push to this branch.
+# 0/10), 0 gone, 7000026 noisy. Passed 11-01 (run 41359818073): same 4 new checks, 0 gone, 239/240 seed results as the
+# PC and the last one a known PC flake with the same offsets. Rerun by hand:
+#   gh workflow run rig-proof.yml --repo aidanvalero/Grim --ref rig
 name: rig-proof
 on:
-  push:
-    branches: [rig]
+  workflow_dispatch:
 permissions:
   contents: read
 env:
