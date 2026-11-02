@@ -40,6 +40,7 @@ jobs:
         with: {context: rig, tags: grim-ci, load: true, cache-from: type=gha, cache-to: 'type=gha,mode=max,ignore-error=true'}
       - name: build stock and the PR with the PC's JDKs
         run: |
+          set -o pipefail
           mkdir -p jars gradle-home
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e GRADLE_USER_HOME=/gradle-home \
             -v "$PWD/grim:/grim" -v "$PWD/gradle-home:/gradle-home" -v "$PWD/jars:/out" grim-ci \
@@ -47,6 +48,8 @@ jobs:
       - name: proof, CI's jars against the PC's
         if: env.PROOF == 'true'
         run: |
+          # The runner's default shell is bash -e without pipefail, so a jar_diff failure piped into tee used to pass
+          set -o pipefail
           python3 rig/jar_diff.py jars/stock.jar rig/stage/grim-jars/grimac-bukkit-2.3.75-eb4c657-STOCK.jar | tee -a "$GITHUB_STEP_SUMMARY"
           python3 rig/jar_diff.py jars/pr.jar rig/stage/grim-jars/grimac-bukkit-2.3.75-pr2789-085ac5e-on-eb4c657.jar | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

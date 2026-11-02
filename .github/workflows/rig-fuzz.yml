@@ -43,6 +43,7 @@ jobs:
         with: {context: rig, tags: grim-ci, load: true, cache-from: type=gha, cache-to: 'type=gha,mode=max,ignore-error=true'}
       - name: build the 2.0 head with the PC's JDKs
         run: |
+          set -o pipefail
           mkdir -p jars gradle-home
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e GRADLE_USER_HOME=/gradle-home \
             -v "$PWD/grim:/grim" -v "$PWD/gradle-home:/gradle-home" -v "$PWD/jars:/out" grim-ci \
