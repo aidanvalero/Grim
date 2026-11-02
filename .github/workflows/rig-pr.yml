@@ -2,6 +2,7 @@
 # (rig/build_grim.sh, the way cobweb/pr-check.ps1 builds: the PR's own diff applied on base), then the same A/B as
 # rig-proof: the 120 suite seeds on both builds over 20 runners, 8 more runs of any seed that differs, fuzz/suite_diff.py.
 #   gh workflow run rig-pr.yml --repo aidanvalero/Grim --ref rig -f pr=<number> [-f base=2.0] [-f pr_sha=<sha>]
+#   -f pr=<owner/repo>:<branch> runs a branch that isn't a PR the same way, its diff from its merge-base applied on base
 # The push that adds or changes the build is its own proof: it rebuilds the PC's 11-01 jars (stock eb4c657, PR #2789 at
 # 085ac5e), fails unless every class is byte-identical to them (rig/jar_diff.py), and runs the A/B on what it built.
 name: rig-pr
@@ -11,7 +12,7 @@ on:
     paths: ['.github/workflows/rig-pr.yml', 'rig/build_grim.sh', 'rig/Dockerfile']
   workflow_dispatch:
     inputs:
-      pr: {description: 'GrimAnticheat/Grim PR number', required: true}
+      pr: {description: 'GrimAnticheat/Grim PR number, or owner/repo:branch', required: true}
       base: {description: 'Grim commit or branch to apply it on', default: '2.0'}
       pr_sha: {description: 'pin the PR head (blank = its current head)', default: ''}
       runs: {description: 'runs per seed', default: '2'}
@@ -132,7 +133,8 @@ jobs:
             [ -f "confirms/confirm-$b/suite-$b-confirm.json" ] && cp "confirms/confirm-$b/suite-$b-confirm.json" rig/stage/fuzz/out/
           done
           cd rig/stage
-          python3 -I fuzz/suite_diff.py stock pr --title "PR #$PR on $BASE (CI, 20 runners)"
+          case "$PR" in *[!0-9]*) WHAT=$PR ;; *) WHAT="PR #$PR" ;; esac
+          python3 -I fuzz/suite_diff.py stock pr --title "$WHAT on $BASE (CI, 20 runners)"
           cat fuzz/out/suite-diff-pr.md >> "$GITHUB_STEP_SUMMARY"
           if [ "$PROOF" = true ]; then
             { echo; echo '## CI vs the PC, seed by seed'; echo; echo '```'
