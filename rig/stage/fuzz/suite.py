@@ -45,8 +45,11 @@ def run(client):
             failing += 1
             work.put((seed, k))          # someone runs it again later
             if failing >= 3:             # crashed or disconnected client: restart just this one
-                subprocess.run(['pwsh', '-NoProfile', '-File', os.path.join(fuzz.HERE, 'launch.ps1'), '-Only', str(client)],
-                               capture_output=True, text=True, timeout=400)
+                try:
+                    subprocess.run(['pwsh', '-NoProfile', '-File', os.path.join(fuzz.HERE, 'launch.ps1'), '-Only', str(client)],
+                                   capture_output=True, text=True, timeout=400)
+                except FileNotFoundError:   # the CI image has no pwsh: this client stops taking work, its seeds go to the other
+                    return
                 failing = 0
             continue
         failing = 0

@@ -281,9 +281,13 @@ def worker(client, base, until, tail, log, stats):
             failing += 1
             if failing >= 3:   # crashed or disconnected client: restart just this one, the others keep going
                 stats[client]['relaunches'] += 1
-                r = subprocess.run(['pwsh', '-NoProfile', '-File', os.path.join(HERE, 'launch.ps1'), '-Only', str(client)],
-                                   capture_output=True, text=True, timeout=400)
-                rec['relaunch'] = (r.stdout or r.stderr).strip()[-120:]
+                try:
+                    r = subprocess.run(['pwsh', '-NoProfile', '-File', os.path.join(HERE, 'launch.ps1'), '-Only', str(client)],
+                                       capture_output=True, text=True, timeout=400)
+                    rec['relaunch'] = (r.stdout or r.stderr).strip()[-120:]
+                except FileNotFoundError:   # the CI image has no pwsh to relaunch with: this client stops, the other goes on
+                    rec['relaunch'], rec['gave_up'] = 'no pwsh to relaunch with', True
+                    until = 0
                 failing = 0
                 if stats[client]['relaunches'] > 5:
                     rec['gave_up'] = True

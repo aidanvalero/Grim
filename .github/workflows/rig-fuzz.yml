@@ -1,0 +1,100 @@
+# Nightly real-client fuzz of Grim 2.0 on GitHub's free runners. Builds the 2.0 head with the PC's JDKs (rig/build_grim.sh),
+# then every runner fuzzes with 2 vanilla 26.3 clients (fuzz/fuzz.py run: random scenarios, every candidate rerun 3 times,
+# shrunk and minimized, runs that trip Timer voided and rerun) and fuzz/group.py turns the finds into families in the run
+# summary. Shard k on night n starts at seed 1e9 + n*1e8 + k*1e7, so a find replays on the PC with
+#   python -I fuzz/fuzz.py repro --seed <seed>        (cobweb/rig-nightly.ps1 downloads each night's finds to fuzz/finds-ci/)
+# The PC starts it every night (task "Grim rig nightly fuzz"); by hand:
+#   gh workflow run rig-fuzz.yml --repo aidanvalero/Grim --ref rig [-f minutes=110] [-f shards=10]
+# Sized at 10 runners x 2 h: GitHub's terms allow testing the repo's own project but rule out burden out of proportion to
+# the benefit. The push that adds or changes this file is a 2 runner x 10 min smoke run.
+name: rig-fuzz
+on:
+  push:
+    branches: [rig]
+    paths: ['.github/workflows/rig-fuzz.yml']
+  workflow_dispatch:
+    inputs:
+      base: {description: 'Grim commit or branch to fuzz', default: '2.0'}
+      minutes: {description: 'fuzzing minutes per runner (stay under 150)', default: '110'}
+      shards: {description: 'runners', default: '10'}
+permissions:
+  contents: read
+env:
+  BASE: ${{ inputs.base || '2.0' }}
+  MINUTES: ${{ github.event_name == 'push' && '10' || inputs.minutes }}
+  SHARDS: ${{ github.event_name == 'push' && '2' || inputs.shards }}
+  PAPER_SHA256: a0a58f532f08054ea92eb916d3edb6ed3c86429d77175317304f6e995cce9968
+jobs:
+  jars:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      night: ${{ steps.plan.outputs.night }}
+      grim: ${{ steps.plan.outputs.grim }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: {repository: GrimAnticheat/Grim, ref: '2.0', path: grim, fetch-depth: 0, persist-credentials: false}
+      - uses: actions/cache@v4
+        with: {path: gradle-home, key: 'gradle-${{ github.run_id }}', restore-keys: gradle-}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: {context: rig, tags: grim-ci, load: true, cache-from: type=gha, cache-to: 'type=gha,mode=max,ignore-error=true'}
+      - name: build the 2.0 head with the PC's JDKs
+        run: |
+          mkdir -p jars gradle-home
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e GRADLE_USER_HOME=/gradle-home \
+            -v "$PWD/grim:/grim" -v "$PWD/gradle-home:/gradle-home" -v "$PWD/jars:/out" grim-ci \
+            bash /build_grim.sh /grim /out "$BASE" | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: plan
+        run: |
+          echo "shards=$(seq 0 $((SHARDS - 1)) | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "night=$(( ($(date -u +%s) - $(date -u -d 2026-11-01 +%s)) / 86400 ))" >> "$GITHUB_OUTPUT"
+          echo "grim=$(git -C grim describe --always --tags HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with: {name: jars, path: jars/}
+
+  fuzz:
+    needs: jars
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.jars.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rig-setup
+      - uses: actions/download-artifact@v4
+        with: {name: jars, path: rig/stage/grim-jars}
+      - name: fuzz
+        run: |
+          SEED=$((1000000000 + ${{ needs.jars.outputs.night }} * 100000000 + ${{ matrix.shard }} * 10000000))
+          docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache:/cache/mc" -v "$PWD/out:/out" grim-ci \
+            bash /run.sh stock.jar fuzz - "" "python3 -I fuzz/fuzz.py run --clients 2 --minutes $MINUTES --seed $SEED"
+      - name: no kept result may come from a client hitch
+        run: python3 rig/ci_gate.py out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'fuzz-${{ matrix.shard }}', path: out/}
+
+  report:
+    needs: [jars, fuzz]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'fuzz-*', path: shards}
+      - name: group the finds into families
+        run: |
+          cp shards/*/finds/s*.json rig/stage/fuzz/finds/ 2>/dev/null || true
+          cd rig/stage
+          python3 -I fuzz/group.py --results ../../shards/*/results-*.jsonl
+          { echo "Grim ${{ needs.jars.outputs.grim }}, $SHARDS runners x $MINUTES min, night ${{ needs.jars.outputs.night }}"; echo
+            cat ../../shards/*/timing.txt | grep -E "scenarios in .* candidates" | sed 's/^/- /'; echo
+            cat fuzz/out/report.md; } >> "$GITHUB_STEP_SUMMARY"
+          cp fuzz/out/report.md fuzz/out/groups.json fuzz/finds/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with: {name: finds, path: rig/stage/fuzz/finds/}

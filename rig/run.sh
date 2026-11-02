@@ -1,6 +1,7 @@
 #!/bin/bash
 # One CI-shaped job: a fresh server with the given Grim jar, 2 vanilla 26.3 clients under Xvfb + Mesa, then suite.py.
 #   run.sh <grim jar> <label> "<suite args>" ["<second suite args>"] ["<extra command run from /rig>"]
+#   suite args "-" skips the suite, for a job that only runs the extra command (the nightly fuzz)
 set -u
 JAR=$1; LABEL=$2; SUITE1=$3; SUITE2=${4:-}; EXTRA=${5:-}
 T0=$(date +%s)
@@ -34,8 +35,10 @@ stamp "clients joined: $(grep -c 'joined the game' /rig/repro263/console.log)"
 grep -h -E 'Using graphics (backend|device)' /rig/mc-fuzz/1/logs/latest.log | tee -a /out/timing.txt
 cd /rig && python3 -I fuzz/fuzz.py setup 2 > /out/setup.log 2>&1
 ( sleep 30; python3 /cpu.py > /out/cpu.txt 2>&1 ) &
-stamp "suite 1: $SUITE1"
-python3 -I fuzz/suite.py $LABEL $SUITE1 2>&1 | tail -3 | tee -a /out/timing.txt
+if [ "$SUITE1" != "-" ]; then
+  stamp "suite 1: $SUITE1"
+  python3 -I fuzz/suite.py $LABEL $SUITE1 2>&1 | tail -3 | tee -a /out/timing.txt
+fi
 if [ -n "$SUITE2" ]; then
   stamp "suite 2: $SUITE2"
   python3 -I fuzz/suite.py $LABEL-b $SUITE2 2>&1 | tail -3 | tee -a /out/timing.txt
@@ -54,6 +57,7 @@ for pair in "1 2" "2 1"; do
   wait $BG
 done
 stamp "done"
-cp /rig/fuzz/out/suite-*.json /rig/fuzz/out/voided.jsonl /out/ 2>/dev/null
+cp /rig/fuzz/out/suite-*.json /rig/fuzz/out/voided.jsonl /rig/fuzz/out/results-*.jsonl /out/ 2>/dev/null
+mkdir -p /out/finds && cp /rig/fuzz/finds/s*.json /out/finds/ 2>/dev/null
 cp /rig/repro263/console.log /out/console.log
 cat /out/cpu.txt >> /out/timing.txt
