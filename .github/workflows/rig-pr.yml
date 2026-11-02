@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
-        with: {repository: GrimAnticheat/Grim, ref: 2.0, path: grim, fetch-depth: 0, persist-credentials: false}
+        with: {repository: GrimAnticheat/Grim, ref: '2.0', path: grim, fetch-depth: 0, persist-credentials: false}
       - uses: actions/cache@v4
         with: {path: gradle-home, key: 'gradle-${{ github.run_id }}', restore-keys: gradle-}
       - uses: docker/setup-buildx-action@v3
