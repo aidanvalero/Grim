@@ -13,7 +13,7 @@ for b in builds:
     for k, p in enumerate(parts):
         d = json.load(open(p))
         out['grim'] = out['grim'] or d['grim']
-        out['runs'] = d['runs']
+        out['runs'] = out['runs'] or d['runs']                       # the seed shards' runs, not the old job's 5
         out['count'] += d['count']
         out['cases'] += [c for c in d.get('cases', []) if c not in out['cases']]
         out['minutes'] = max(out['minutes'], d['minutes'])          # wall clock: the shards run side by side

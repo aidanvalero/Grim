@@ -19,6 +19,16 @@ RUN set -e; \
       || curl -fsSL -o /tmp/jdk21.tgz "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"; \
     mkdir -p /opt/jdk21 && tar -xzf /tmp/jdk21.tgz -C /opt/jdk21 --strip-components=1 && rm /tmp/jdk21.tgz && /opt/jdk21/bin/java -version
 RUN python3 -m venv /opt/pmc && /opt/pmc/bin/pip install --no-cache-dir portablemc==5.0.6 && /opt/pmc/bin/portablemc --version
+# Old clients (run_old.sh) run on the Java they shipped with, the same builds as the PC rig's fuzz/launch.ps1: 1.14.4 on
+# 8u504-b01, 1.18.1 on 17.0.20.1+1 (it crashes in its texture atlas on 25)
+RUN set -e; \
+    curl -fsSL -o /tmp/jre8.tgz "https://api.adoptium.net/v3/binary/version/jdk8u504-b01/linux/x64/jre/hotspot/normal/eclipse?project=jdk" \
+      || curl -fsSL -o /tmp/jre8.tgz "https://api.adoptium.net/v3/binary/latest/8/ga/linux/x64/jre/hotspot/normal/eclipse"; \
+    mkdir -p /opt/jre8 && tar -xzf /tmp/jre8.tgz -C /opt/jre8 --strip-components=1 && rm /tmp/jre8.tgz && /opt/jre8/bin/java -version
+RUN set -e; \
+    curl -fsSL -o /tmp/jre17.tgz "https://api.adoptium.net/v3/binary/version/jdk-17.0.20.1%2B1/linux/x64/jre/hotspot/normal/eclipse?project=jdk" \
+      || curl -fsSL -o /tmp/jre17.tgz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse"; \
+    mkdir -p /opt/jre17 && tar -xzf /tmp/jre17.tgz -C /opt/jre17 --strip-components=1 && rm /tmp/jre17.tgz && /opt/jre17/bin/java -version
 COPY probe /probe
 RUN /opt/jdk/bin/javac -d /probe /probe/TickProbe.java
-COPY run.sh cpu.py build_grim.sh /
+COPY run.sh run_old.sh cpu.py build_grim.sh /

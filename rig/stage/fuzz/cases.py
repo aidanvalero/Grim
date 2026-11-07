@@ -1,11 +1,12 @@
 # Known bugs as fixed suite cases (11-07). Each one is a bug the rig reproduced for a fix, kept as one scenario a client
 # runs next to the random seeds: suite.py --cases runs them and files the results under case:<name>, so suite_diff.py
 # lines them up between two builds the same way as seeds. A case flags on 2.0 until its fix merges and has to stay at 0
-# after, and a PR that fixes one shows it as gone. Everything here reproduces on 26.3 clients. Not in yet: the old client
-# ones (#2858 end bricks on 1.14.4 and older, #2993 chests on 1.21.8 and older through Via) and #2961, which needs spawn
-# protection on the plot and that would refuse the dig-down breaks too.
+# after, and a PR that fixes one shows it as gone. A case with a 'version' needs that client (through ViaBackwards on
+# the 26.3 server, rig/run_old.sh), the rest run on 26.3. The old client ones guard fixes that are in already: they
+# flag on a 2.0 from before the fix and have to stay at 0 from it on.
 #   build(name, client) -> (scenario, rcon commands to run before it, rcon commands to run after it)
-#   pick('all' | 'a,b' | 'shard:K/N') -> case names, shard:K/N being every Nth case starting at K
+#   pick('all' | 'old' | 'a,b' | 'shard:K/N') -> case names. shard:K/N is every Nth 26.3 case starting at K, old is
+#   every case that needs an older client
 import fuzz
 
 NETH5 = 'minecraft:netherite_pickaxe[minecraft:enchantments={"minecraft:efficiency":5}]'
@@ -56,6 +57,42 @@ def dismount(client, vehicle):
     return sc, before, [f'kill @e[tag={tag}]']
 
 
+def scaffold_refused(client, height=8, clicks=5, first=30):
+    # scaffold_protect.py v2 with BreakGuard (#2961): an 8 high scaffolding column, the player on top looking straight
+    # down, a click every 12 ticks, and every scaffolding break refused the way a protection plugin refuses it, so the
+    # block comes back after the client already dropped into it. 2.0 d8d7b37 on the PC: 10/20 runs flag Simulation
+    # (one client every run, the other none), PR #3004. BreakGuard only refuses scaffolding breaks and nothing else in
+    # the suite breaks scaffolding, so it stays on once a run turns it on
+    ox, oz = fuzz.origin(client)
+    p = f'AidanFuzz{client}'
+    top = fuzz.FLOOR_Y + 1 + height
+    ev = [(2, 'rcon', f'tp {p} {ox + 0.5} {top} {oz + 0.5} 0 90'), (8, 'flick', '0 90')]
+    for i in range(clicks):
+        ev += [(first + 12 * i, 'down', 'attack'), (first + 12 * i + 2, 'up', 'attack')]
+    sc = {'build': [('fill', (0, 1, 0, 0, height, 0), 'scaffolding')], 'effects': [], 'yaw': 0.0,
+          'ticks': first + 12 * clicks + 20, 'events': ev}
+    before = [f'clear {p}', f'kill @e[type=!minecraft:player,x={ox - 12},y={fuzz.FLOOR_Y - 3},z={oz - 12},dx=24,dy=40,dz=24]',
+              'breakguard on']
+    return sc, before, []
+
+
+def line(client, tool, block, hold, rounds=4):
+    # fastbreak_sweep's line cases: 4 blocks in a line at eye height straight ahead (z +2..+5, yaw 0 pitch 0), so
+    # breaking one puts the crosshair on the next. Each round refills the line and holds attack for `hold` ticks
+    ox, oz = fuzz.origin(client)
+    p = f'AidanFuzz{client}'
+    ev = [(1, 'grab', 'on')] + [(2, 'rcon', f'item replace entity {p} hotbar.{h} with {tool}') for h in range(9)]
+    t = 10
+    for _ in range(rounds):
+        ev += [(t, 'rcon', f'fill {ox} {fuzz.FLOOR_Y + 2} {oz + 2} {ox} {fuzz.FLOOR_Y + 2} {oz + 5} minecraft:{block}'),
+               (t + 2, 'down', 'attack'), (t + 2 + hold, 'up', 'attack')]
+        t += hold + 12
+    ev.append((t, 'grab', 'off'))
+    sc = {'build': [], 'effects': [], 'yaw': 0.0, 'ticks': t + 6, 'events': ev}
+    items = f'kill @e[type=minecraft:item,x={ox - 12},y={fuzz.FLOOR_Y - 3},z={oz - 12},dx=24,dy=30,dz=24]'
+    return sc, [f'clear {p}', items], [f'clear {p}', items]
+
+
 def plain(sc):
     return lambda client: (dict(sc), [], [])
 
@@ -82,11 +119,31 @@ CASES = {
                    (54, 'down', 'forward'), (54, 'down', 'sneak'), (54, 'down', 'sprint'), (57, 'up', 'forward'),
                    (57, 'up', 'sneak'), (57, 'up', 'sprint')]}),
         'expect': 'Simulation on 2.0, no fix yet'},
+    'scaffold-refused': {'make': scaffold_refused, 'expect': 'Simulation on 2.0 some runs until #3004 merges (#2961)'},
+    # old clients through ViaBackwards, all on the PC rig first (fastbreak_sweep.py). #2858: end stone bricks and the
+    # wall 1.14 added were 0.8 hardness up to 1.14.4 and grim used 3, so every block flagged (1.14.4, iron pick: 41
+    # FastBreak in 3/3 runs). Fixed by #3005
+    'end-bricks-1.14.4': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'end_stone_bricks', 40), 'version': '1.14.4',
+                          'expect': 'FastBreak before #3005 (#2858), 0 after'},
+    'end-brick-wall-1.14.4': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'end_stone_brick_wall', 40),
+                              'version': '1.14.4', 'expect': 'FastBreak before #3005 (#2858), 0 after'},
+    # #2993: Via shows 1.21.8 and older a plain chest for copper chests, so a pickaxe mines chests at pickaxe speed there
+    # and grim expected hand speed (1.21.8: 59 FastBreak, 1.18.1: 54, copper chests 15). Fixed by #3001
+    'chest-pickaxe-1.21.8': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'chest', 90), 'version': '1.21.8',
+                             'expect': 'FastBreak before #3001 (#2993), 0 after'},
+    'copper-chest-pickaxe-1.21.8': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'copper_chest', 90),
+                                    'version': '1.21.8', 'expect': 'FastBreak before #3001 (#2993), 0 after'},
+    'chest-pickaxe-1.18.1': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'chest', 90), 'version': '1.18.1',
+                             'expect': 'FastBreak before #3001 (#2993), 0 after'},
 }
 
 
 def build(name, client):
     return CASES[name]['make'](client)
+
+
+def version(name):
+    return CASES[name].get('version', '26.3') if name in CASES else '26.3'
 
 
 def pick(spec):
@@ -95,9 +152,11 @@ def pick(spec):
         return []
     if spec == 'all':
         return names
+    if spec == 'old':
+        return [c for c in names if version(c) != '26.3']
     if spec.startswith('shard:'):
         k, n = (int(x) for x in spec[6:].split('/'))
-        return [c for i, c in enumerate(names) if i % n == k]
+        return [c for i, c in enumerate(c for c in names if version(c) == '26.3') if i % n == k]
     unknown = [c for c in spec.split(',') if c not in CASES]
     if unknown:
         raise SystemExit(f'unknown cases {unknown}, known: {names}')

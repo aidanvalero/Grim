@@ -81,8 +81,35 @@ jobs:
         if: always()
         with: {name: 'suite-${{ matrix.build }}-${{ matrix.shard }}', path: out/}
 
+  old:
+    # the known-bug cases that need an older client: 1.14.4, 1.21.8 and 1.18.1 through ViaBackwards (rig/run_old.sh).
+    # 5 runs each since the confirm job only has 26.3 clients. Shows up in the verdict as one more shard
+    needs: jars
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [stock, pr]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rig-setup
+      - uses: actions/cache@v4
+        with: {path: mc-cache-old, key: mc-1.14.4-1.21.8-1.18.1-portablemc-5.0.6-v1}
+      - uses: actions/download-artifact@v4
+        with: {name: jars, path: rig/stage/grim-jars}
+      - name: old clients through ViaBackwards
+        run: |
+          mkdir -p mc-cache-old
+          docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache-old:/cache/mc" -v "$PWD/out:/out" grim-ci \
+            bash /run_old.sh ${{ matrix.build }}.jar ${{ matrix.build }} "--cases old --runs 5"
+      - run: python3 rig/ci_gate.py out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'suite-${{ matrix.build }}-old', path: out/}
+
   differing:
-    needs: suite
+    needs: [suite, old]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     outputs:
@@ -120,7 +147,7 @@ jobs:
         with: {name: 'confirm-${{ matrix.build }}', path: out/}
 
   verdict:
-    needs: [jars, suite, confirm]
+    needs: [jars, suite, old, confirm]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:

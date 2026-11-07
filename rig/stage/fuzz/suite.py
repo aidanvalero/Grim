@@ -18,20 +18,24 @@ ap.add_argument('--count', type=int, default=120)
 ap.add_argument('--runs', type=int, default=2)
 ap.add_argument('--clients', default='1,2,3,4')
 ap.add_argument('--seeds', default='', help='comma-separated seeds (or case:<name>) instead of base..base+count-1')
-ap.add_argument('--cases', default='', help="known-bug cases from cases.py: all, a,b, or shard:K/N")
+ap.add_argument('--cases', default='', help="known-bug cases from cases.py: all, old, a,b, or shard:K/N")
+ap.add_argument('--client-versions', default='', help='mixed versions, e.g. 1=1.14.4,2=1.21.8 (a client left out is 26.3); '
+                                                       'a client only takes the seeds and cases for its version')
 a = ap.parse_args()
 clients = [int(c) for c in a.clients.split(',')]
+versions = dict(x.split('=') for x in a.client_versions.split(',') if x)
 
-work = queue.Queue()
 tokens = [x for x in a.seeds.split(',') if x]
 seed_list = [int(x) for x in tokens if not x.startswith('case:')]
 case_list = list(dict.fromkeys([x[5:] for x in tokens if x.startswith('case:')] + cases.pick(a.cases)))
 cases.pick(','.join(case_list))                     # fails here on a name cases.py doesn't have
 if not tokens and not a.cases:
     seed_list = [a.base + i for i in range(a.count)]
+queues = {}                                         # one per client version: random seeds and new cases are 26.3
 for k in range(a.runs):
     for key in seed_list + [f'case:{c}' for c in case_list]:
-        work.put((key, k))
+        v = cases.version(key[5:]) if isinstance(key, str) else '26.3'
+        queues.setdefault(v, queue.Queue()).put((key, k))
 tail = fuzz.Tail()
 tail.start()
 results, lock = {}, threading.Lock()
@@ -41,6 +45,7 @@ GIVE_UP = 15                          # driver errors before a client stops taki
 
 def run(client):
     rc = Rcon()
+    work = queues.setdefault(versions.get(str(client), '26.3'), queue.Queue())
     fuzz.play(rc, tail, fuzz.scenario(client * 1_000_000 - 1, ticks=20), client)   # warm-up: first trip isn't scored
     failing = 0
     while errors[client] <= GIVE_UP:
@@ -88,7 +93,7 @@ try:
     grim = m.group(1) if m else ''
 except OSError:
     pass
-left = work.qsize()
+left = sum(q.qsize() for q in queues.values())     # includes cases for a version no client here runs
 out = {'label': a.label, 'grim': grim, 'base': a.base, 'count': len(seed_list), 'seeds': a.seeds, 'cases': case_list,
        'runs': a.runs, 'clients': clients, 'minutes': round((time.time() - t0) / 60, 1), 'driver_errors': errors,
        'not_run': left, 'results': results}

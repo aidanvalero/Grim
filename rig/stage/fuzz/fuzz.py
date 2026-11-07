@@ -226,7 +226,9 @@ def play_once(rc, tail, sc, client):
         f.write(schedule(sc, client))
     env = dict(os.environ, JDWP_PORT=str(5005 + client))
     try:
-        names = [os.path.join(COBWEB, os.environ['NAMES'])] if os.environ.get('NAMES') else []   # pre-26.1 clients
+        # pre-26.1 clients need their obfuscated names: NAMES for every client, NAMES_<client> for one (mixed versions)
+        nm = os.environ.get(f'NAMES_{client}') or os.environ.get('NAMES')
+        names = [os.path.join(COBWEB, nm)] if nm else []
         p = subprocess.run([JAVA, '-cp', COBWEB, 'KeyDriver', path] + names, env=env, capture_output=True, text=True,
                            timeout=sc['ticks'] / 20 + 90)
         driver = p.stdout.strip().splitlines()[-1:] if p.stdout else []

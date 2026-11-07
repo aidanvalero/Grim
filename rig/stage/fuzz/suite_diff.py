@@ -76,7 +76,9 @@ for seed in seeds:
             noisy.append(row)
 
 if a.differing:
-    print(','.join(sorted({str(r[0]) for r in gone + new + noisy})))
+    # the confirm job only has 26.3 clients, so old client cases aren't rerun there (the old job runs them 5 times)
+    keys = {str(r[0]) for r in gone + new + noisy}
+    print(','.join(sorted(k for k in keys if not k.startswith('case:') or cases.version(k[5:]) == '26.3')))
     sys.exit(0)
 
 
@@ -97,10 +99,12 @@ def repro(key):
 
 case_keys = [k for k in seeds if k.startswith('case:')]
 n_random = len(seeds) - len(case_keys)
+older = sorted({cases.version(k[5:]) for k in case_keys} - {'26.3'})
 lines = [f'# Real-client regression net: {a.title or a.pr}', '',
          f'Same {n_random} random scenarios (seeds {S["base"]}-{S["base"] + S["count"] - 1}, fuzz.scenario)'
          + (f' and {len(case_keys)} known-bug cases (fuzz/cases.py)' if case_keys else '')
-         + f' on both builds, {S["runs"]} runs each, {len(S["clients"])} vanilla 26.3 clients.', '',
+         + f' on both builds, {S["runs"]} runs each, {len(S["clients"])} vanilla clients, 26.3'
+         + (f' plus {", ".join(older)} through ViaBackwards for the old client cases (5 runs each)' if older else '') + '.', '',
          '| | stock | PR |', '|---|---|---|',
          f'| build | {S["grim"]} | {P["grim"]} |',
          f'| runs | {total(S)} | {total(P)} |',
