@@ -11,6 +11,9 @@ so a scenario replays the same way every time. A vanilla client can't cheat, so 
   and lined up seed by seed against the PC's results in `rig/baseline`. Same verdict as the PC.
 - `.github/workflows/rig-pr.yml`: the same A/B for any PR, with both jars built here by `rig/build_grim.sh` on the PC's
   JDKs. `gh workflow run rig-pr.yml --repo aidanvalero/Grim --ref rig -f pr=<number>`
+- `rig/stage/fuzz/cases.py`: known bugs as fixed cases that run next to the random seeds on every A/B (digging down
+  with haste, a server dismount from a seat, a slime direction change, water next to a carpet). Each flags on 2.0 until
+  its fix merges and has to stay at 0 after, and the report lists every case on both builds.
 
 Two things a GPU-less 26.3 client needs: `SDL_VIDEO_FORCE_EGL=1` (26.3 asks for an sRGB-capable framebuffer and
 Xvfb's GLX has no sRGB visual), and Netty on NIO for server and clients, like the Windows rig.

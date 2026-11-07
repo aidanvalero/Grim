@@ -16,12 +16,16 @@ def summary(runs):
 
 
 same = 0
-for seed in sorted(ci['results'], key=int):
+# random seeds only: the known-bug cases (case:<name>, 11-07) are newer than the PC baseline
+keys = sorted((k for k in ci['results'] if not k.startswith('case:')), key=int)
+for seed in keys:
     c, l = ci['results'][seed], local.get(seed, [])
     cs = {tuple(sorted(f'{a} {b}' for a, b in r)) for r in c}
     ls = {tuple(sorted(f'{a} {b}' for a, b in r)) for r in l}
     ok = cs <= ls if l else None
     same += bool(ok)
     print(f'{seed}: container {summary(c)} | local {summary(l) if l else "not run"} | {"match" if ok else "DIFFERENT" if l else "?"}')
-print(f'{same}/{len(ci["results"])} seeds: every container run matches a result the local rig produced (same checks, same offsets)')
+if len(keys) < len(ci['results']):
+    print(f'{len(ci["results"]) - len(keys)} known-bug cases not compared, the PC baseline is older than them')
+print(f'{same}/{len(keys)} seeds: every container run matches a result the local rig produced (same checks, same offsets)')
 print(f'container: {ci["minutes"]} min, driver errors {ci["driver_errors"]}, not run {ci["not_run"]}, grim {ci["grim"]}')

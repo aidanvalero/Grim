@@ -1,6 +1,7 @@
 # Any GrimAnticheat/Grim PR on real vanilla clients. Builds stock and the PR inside rig/Dockerfile with the PC's JDKs
 # (rig/build_grim.sh, the way cobweb/pr-check.ps1 builds: the PR's own diff applied on base), then the same A/B as
 # rig-proof: the 120 suite seeds on both builds over 20 runners, 8 more runs of any seed that differs, fuzz/suite_diff.py.
+# 11-07: the known-bug cases (rig/stage/fuzz/cases.py) run next to the seeds, spread over the shards, under case:<name>.
 #   gh workflow run rig-pr.yml --repo aidanvalero/Grim --ref rig -f pr=<number> [-f base=2.0] [-f pr_sha=<sha>]
 #   -f pr=<owner/repo>:<branch> runs a branch that isn't a PR the same way, its diff from its merge-base applied on base
 # The push that adds or changes the build is its own proof: it rebuilds the PC's 11-01 jars (stock eb4c657, PR #2789 at
@@ -69,11 +70,11 @@ jobs:
       - uses: ./.github/actions/rig-setup
       - uses: actions/download-artifact@v4
         with: {name: jars, path: rig/stage/grim-jars}
-      - name: this shard's seeds
+      - name: this shard's seeds and known-bug cases
         run: |
           SEEDS=$(python3 -c "k = ${{ matrix.shard }}; print(','.join(str(7000000 + i) for i in range(120) if i % 10 == k))")
           docker run --rm -e FUZZ_RETRY_TIMER=3 -v "$PWD/rig/stage:/stage/rig:ro" -v "$PWD/mc-cache:/cache/mc" -v "$PWD/out:/out" grim-ci \
-            bash /run.sh ${{ matrix.build }}.jar ${{ matrix.build }} "--seeds $SEEDS --runs $RUNS --clients 1,2"
+            bash /run.sh ${{ matrix.build }}.jar ${{ matrix.build }} "--seeds $SEEDS --cases shard:${{ matrix.shard }}/10 --runs $RUNS --clients 1,2"
       - name: no kept result may come from a client hitch
         run: python3 rig/ci_gate.py out
       - uses: actions/upload-artifact@v4

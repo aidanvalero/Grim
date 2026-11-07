@@ -6,6 +6,7 @@
 import argparse, json, os, sys
 from math import comb
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cases
 import fuzz
 
 ap = argparse.ArgumentParser()
@@ -53,15 +54,20 @@ def rates(runs):
     return out
 
 
+def order(key):
+    """random seeds in number order, then the known-bug cases (case:<name>) by name"""
+    return (1, 0, key) if key.startswith('case:') else (0, int(key), '')
+
+
 gone, new, noisy, same_flag = [], [], [], 0
-seeds = sorted(set(S['results']) & set(P['results']), key=int)
+seeds = sorted(set(S['results']) & set(P['results']), key=order)
 for seed in seeds:
     s, p = rates(S['results'][seed]), rates(P['results'][seed])
     ns, np_ = len(S['results'][seed]), len(P['results'][seed])
     for c in sorted(set(s) | set(p)):
         sn, pn = s.get(c, (0, ns, ''))[0], p.get(c, (0, np_, ''))[0]
         pv = fisher(sn, ns - sn, pn, np_ - pn)
-        row = (int(seed), c, f'{sn}/{ns}', f'{pn}/{np_}', f'{pv:.3f}', (s.get(c) or p.get(c))[2])
+        row = (seed, c, f'{sn}/{ns}', f'{pn}/{np_}', f'{pv:.3f}', (s.get(c) or p.get(c))[2])
         if sn / ns == pn / np_:
             same_flag += 1
         elif pv < 0.05:
@@ -74,17 +80,27 @@ if a.differing:
     sys.exit(0)
 
 
+# the headline counts are the random seeds only: those have to stay at 0, and the cases flag on 2.0 on purpose
 def runs_with_flag(d):
-    return sum(1 for v in d['results'].values() for r in v if r)
+    return sum(1 for k, v in d['results'].items() if not k.startswith('case:') for r in v if r)
 
 
 def total(d):
-    return sum(len(v) for v in d['results'].values())
+    return sum(len(v) for k, v in d['results'].items() if not k.startswith('case:'))
 
 
+def repro(key):
+    if key.startswith('case:'):
+        return f'python -I fuzz/suite.py repro --seeds {key} --runs 1 --clients 1'
+    return f'python -I fuzz/fuzz.py repro --seed {key}'
+
+
+case_keys = [k for k in seeds if k.startswith('case:')]
+n_random = len(seeds) - len(case_keys)
 lines = [f'# Real-client regression net: {a.title or a.pr}', '',
-         f'Same {len(seeds)} random scenarios (seeds {S["base"]}-{S["base"] + S["count"] - 1}, fuzz.scenario) on both builds, '
-         f'{S["runs"]} runs each, {len(S["clients"])} vanilla 26.3 clients.', '',
+         f'Same {n_random} random scenarios (seeds {S["base"]}-{S["base"] + S["count"] - 1}, fuzz.scenario)'
+         + (f' and {len(case_keys)} known-bug cases (fuzz/cases.py)' if case_keys else '')
+         + f' on both builds, {S["runs"]} runs each, {len(S["clients"])} vanilla 26.3 clients.', '',
          '| | stock | PR |', '|---|---|---|',
          f'| build | {S["grim"]} | {P["grim"]} |',
          f'| runs | {total(S)} | {total(P)} |',
@@ -97,10 +113,23 @@ lines = [f'# Real-client regression net: {a.title or a.pr}', '',
          f'- new (flags more on the PR, Fisher p < 0.05): **{len(new)}**',
          f'- noisy (differs, not significant): {len(noisy)}',
          f'- same flag rate on both: {same_flag}', '']
+if case_keys:
+    # every case on both builds, changed or not: this is the part that says which known bugs a build still has
+    def flagged(runs):
+        hit = [r for r in runs if r]
+        checks = sorted({c for r in hit for c, _ in r})
+        return f'{len(hit)}/{len(runs)}' + (f' {", ".join(checks)}' if checks else '')
+
+    lines += ['## Known-bug cases', '', '| case | stock | PR | expected |', '|---|---|---|---|']
+    for k in case_keys:
+        name = k[5:]
+        lines.append(f'| {name} | {flagged(S["results"][k])} | {flagged(P["results"][k])} | '
+                     f'{cases.CASES[name]["expect"] if name in cases.CASES else "?"} |')
+    lines.append('')
 for name, rows in (('New on the PR', new), ('Gone on the PR', gone), ('Noisy', noisy)):
     if rows:
         lines += [f'## {name}', '', '| seed | check | stock | PR | p | offset seen | repro |', '|---|---|---|---|---|---|---|']
-        lines += [f'| {sd} | {c} | {st} | {pr} | {pv} | {o} | `python -I fuzz/fuzz.py repro --seed {sd}` |' for sd, c, st, pr, pv, o in rows]
+        lines += [f'| {sd} | {c} | {st} | {pr} | {pv} | {o} | `{repro(sd)}` |' for sd, c, st, pr, pv, o in rows]
         lines.append('')
 path = os.path.join(fuzz.OUT, f'suite-diff-{a.pr}.md')
 open(path, 'w', encoding='utf-8').write('\n'.join(lines))
