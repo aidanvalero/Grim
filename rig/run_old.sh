@@ -29,16 +29,24 @@ stamp "server: $(grep -o 'Done ([0-9.]*s)' /rig/repro263/console.log), plugins: 
 PAIRS=""
 for i in 1 2 3; do
   v=${VERSIONS[$((i - 1))]}
-  mkdir -p /rig/mc-fuzz/$i && cp /rig/options.txt /rig/mc-fuzz/$i/options.txt
+  mkdir -p /rig/mc-fuzz/$i/logs && cp /rig/options.txt /rig/mc-fuzz/$i/options.txt
+  PORT=25600
+  # before 1.20 the client joins while it's still loading, and on software GL the join wins and the first block level
+  # event kills it; fuzz/hold_join.py keeps it in the login phase until its log says it's done loading
+  if [ "$v" != 1.21.8 ]; then
+    PORT=$((25610 + i))
+    python3 -I /rig/fuzz/hold_join.py $PORT 25600 /rig/mc-fuzz/$i/logs/latest.log 240 > /out/hold$i.log 2>&1 &
+    sleep 1
+  fi
   JAVA_TOOL_OPTIONS="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:$((5005 + i))" \
     /opt/pmc/bin/portablemc --main-dir /cache/mc start --mc-dir /rig/mc-fuzz/$i $v -u AidanFuzz$i --join-server localhost \
-    --join-server-port 25600 --jvm ${JVM[$v]} --resolution 320x240 > /out/client$i.log 2>&1 &
+    --join-server-port $PORT --jvm ${JVM[$v]} --resolution 320x240 > /out/client$i.log 2>&1 &
   export "NAMES_$i=names-$v.properties"
   PAIRS="$PAIRS${PAIRS:+,}$i=$v"
   sleep 2
 done
-for i in $(seq 1 300); do [ "$(grep -c 'joined the game' /rig/repro263/console.log)" -ge 3 ] && break; sleep 1; done
-stamp "clients joined: $(grep -c 'joined the game' /rig/repro263/console.log) ($PAIRS)"
+for i in $(seq 1 420); do [ "$(grep -c 'joined the game' /rig/repro263/console.log)" -ge 3 ] && break; sleep 1; done
+stamp "clients joined: $(grep -c 'joined the game' /rig/repro263/console.log) ($PAIRS); held: $(cat /out/hold*.log 2>/dev/null | grep -o 'released after.*' | tr '\n' ' ')"
 export FUZZ_FLOOR_Y=99
 cd /rig && python3 -I fuzz/fuzz.py setup 3 > /out/setup.log 2>&1
 stamp "suite: $SUITE"
@@ -46,4 +54,7 @@ python3 -I fuzz/suite.py $LABEL $SUITE --clients 1,2,3 --client-versions $PAIRS 
 stamp "done"
 cp /rig/fuzz/out/suite-*.json /rig/fuzz/out/voided.jsonl /out/ 2>/dev/null
 cp /rig/repro263/console.log /out/console.log
-for i in 1 2 3; do cp /rig/mc-fuzz/$i/logs/latest.log /out/client$i-latest.log 2>/dev/null; done
+for i in 1 2 3; do
+  cp /rig/mc-fuzz/$i/logs/latest.log /out/client$i-latest.log 2>/dev/null
+  cp /rig/mc-fuzz/$i/crash-reports/*.txt /out/ 2>/dev/null
+done
