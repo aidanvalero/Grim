@@ -37,8 +37,9 @@ import java.util.regex.Pattern;
 // own pings come out of the replayed Grim the same way they did live (same build, same ids), so the recorded pongs
 // answer them; any ping the live Grim sent from its tick loop gets sent here right where it shows up in the recording.
 class RecordedSessionReplayTest {
-    static final Path RECORDING = Path.of(System.getProperty("replay.recording",
-            "C:/Users/Aidan/repos/grim-repro/fuzz/out/rec-85d931f.jsonl"));
+    // made with record_relay.py (next to it in test resources): vanilla 26.3 on Paper 26.3 with Grim built from 2.0 85d931f,
+    // the slime find twice (12 Simulation flags live, .001655.. and .001718..) and clean suite seed 7000000 (none)
+    static final String RECORDING = System.getProperty("replay.recording", "/replay/rec-85d931f.jsonl.gz");
     static final Pattern LINE = Pattern.compile("\"t\": ([0-9.]+), \"d\": \"(c2s|s2c)\", \"p\": \"([^\"]*)\"");
     static final Pattern MARK = Pattern.compile("FUZZ c1 s(\\d+) (start|end)");
 
@@ -47,14 +48,22 @@ class RecordedSessionReplayTest {
         HeadlessGrimPlayerTest.setUp();
         HeadlessGrimPlayerTest.EVENTS.registerListener(new InternalPacketListener());
         new PacketManager().start();                                   // every listener Grim registers on a server
+        // a server that has been up a while has its JIT warm; the first pass gets this JVM there and is thrown away
+        replay("warm-up pass (thrown away)", false);
+        HeadlessGrimPlayerTest.WARNINGS.clear();
+        replay("measured pass", true);
+    }
+
+    void replay(String name, boolean print) throws Exception {
+        Map<String, Double> lastSeen = new LinkedHashMap<>();
         Object nativePlayer = new Object();
         User user = new User(new EmbeddedChannel(), ConnectionState.HANDSHAKING, ClientVersion.UNKNOWN, new UserProfile(null, null));
 
         Map<String, List<String>> flags = new LinkedHashMap<>();
         String segment = "join";
-        int packets = 0, pingsCaughtUp = 0, positions = 0;
+        int packets = 0, pingsCaughtUp = 0, positions = 0, teleports = 0;
         long start = System.nanoTime();
-        for (String line : Files.readAllLines(RECORDING)) {
+        for (String line : lines(RECORDING)) {
             Matcher m = LINE.matcher(line);
             if (!m.find()) continue;
             byte[] bytes = Base64.getDecoder().decode(m.group(3));
@@ -100,6 +109,7 @@ class RecordedSessionReplayTest {
                     }
                     post = EventCreationUtil.createSendEvent(user.getChannel(), user, nativePlayer, Unpooled.wrappedBuffer(bytes), true);
                 }
+                if (post.getPacketType() == PacketType.Play.Server.PLAYER_POSITION_AND_LOOK) teleports++;
                 HeadlessGrimPlayerTest.EVENTS.callEvent(post, null, false);
                 PacketSendEvent pre = EventCreationUtil.createSendEvent(user.getChannel(), user, nativePlayer, Unpooled.wrappedBuffer(bytes), true);
                 HeadlessGrimPlayerTest.EVENTS.callEvent(pre, null, true);
@@ -126,14 +136,26 @@ class RecordedSessionReplayTest {
             }
         }
         GrimPlayer player = GrimAPI.INSTANCE.getPlayerDataManager().getPlayer(user);
-        System.out.println("replayed " + packets + " packets, " + positions + " position packets in play, final state "
+        GrimAPI.INSTANCE.getPlayerDataManager().remove(user);          // the session is over, like a quit
+        if (!print) {
+            System.out.println(name + ": " + flags.values().stream().mapToInt(List::size).sum() + " flags");
+            return;
+        }
+        System.out.println(name + ": replayed " + packets + " packets, " + positions + " position packets in play, final state "
                 + user.getDecoderState() + "/" + user.getEncoderState() + ", player " + (player != null ? player.getName() : "never created")
                 + ", pings sent to catch up with the live Grim: " + pingsCaughtUp
-                + ", last transaction received " + (player != null ? player.lastTransactionReceived.get() : -1));
+                + ", last transaction received " + (player != null ? player.lastTransactionReceived.get() : -1)
+                + ", server teleports " + teleports);
         flags.forEach((seg, list) -> System.out.println("  " + seg + ": " + list));
         System.out.println("listener warnings: " + HeadlessGrimPlayerTest.WARNINGS.size());
         HeadlessGrimPlayerTest.WARNINGS.stream().limit(6).forEach(w -> System.out.println("  " + w));
     }
-
-    static final Map<String, Double> lastSeen = new LinkedHashMap<>();
+    static List<String> lines(String recording) throws Exception {
+        java.io.InputStream in = recording.startsWith("/") ? RecordedSessionReplayTest.class.getResourceAsStream(recording)
+                : Files.newInputStream(Path.of(recording));
+        if (recording.endsWith(".gz")) in = new java.util.zip.GZIPInputStream(in);
+        try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8))) {
+            return reader.lines().toList();
+        }
+    }
 }
