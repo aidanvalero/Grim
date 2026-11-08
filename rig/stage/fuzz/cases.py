@@ -133,8 +133,7 @@ CASES = {
                              'expect': 'FastBreak before #3001 (#2993), 0 after'},
     'copper-chest-pickaxe-1.21.8': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'copper_chest', 90),
                                     'version': '1.21.8', 'expect': 'FastBreak before #3001 (#2993), 0 after'},
-    'chest-pickaxe-1.18.1': {'make': lambda c: line(c, 'minecraft:iron_pickaxe', 'chest', 90), 'version': '1.18.1',
-                             'expect': 'FastBreak before #3001 (#2993), 0 after'},
+    # 1.18.1's chest case is out with its client (rig/run_old.sh): 1.21.8 guards the same #3001 path
 }
 
 

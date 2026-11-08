@@ -82,7 +82,7 @@ jobs:
         with: {name: 'suite-${{ matrix.build }}-${{ matrix.shard }}', path: out/}
 
   old:
-    # the known-bug cases that need an older client: 1.14.4, 1.21.8 and 1.18.1 through ViaBackwards (rig/run_old.sh).
+    # the known-bug cases that need an older client: 1.14.4 and 1.21.8 through ViaBackwards (rig/run_old.sh).
     # 5 runs each since the confirm job only has 26.3 clients. Shows up in the verdict as one more shard
     needs: jars
     runs-on: ubuntu-latest

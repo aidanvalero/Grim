@@ -1,12 +1,14 @@
 #!/bin/bash
 # Old clients through ViaBackwards (11-07): a fresh 26.3 server with the given Grim jar plus ViaVersion and ViaBackwards
 # 5.12.2-SNAPSHOT (the PC rig's), one vanilla client per old version under Xvfb + Mesa, each on the Java the PC runs it
-# on (fuzz/launch.ps1: 1.14.4 on 8, 1.18.1 on 17 since it crashes on 25, 1.21.8 on 25), then suite.py on the cases
-# fuzz/cases.py marks for those versions. Plots go up at y 99, 1.14.4 only has y 0-255.
+# on (fuzz/launch.ps1: 1.14.4 on 8, 1.21.8 on 25), then suite.py on the cases fuzz/cases.py marks for those versions.
+# Plots go up at y 99, 1.14.4 only has y 0-255. 1.18.1 (on 17, it crashes on 25) was a third client until 11-07: it
+# dropped right after joining in one of its two sessions with no error on either side, and 1.21.8 guards the same fix
 #   run_old.sh <grim jar> <label> "<suite args>"
 set -u
 JAR=$1; LABEL=$2; SUITE=$3
-VERSIONS=(1.14.4 1.21.8 1.18.1)
+VERSIONS=(1.14.4 1.21.8)
+N=${#VERSIONS[@]}
 declare -A JVM=([1.14.4]=/opt/jre8/bin/java [1.18.1]=/opt/jre17/bin/java [1.21.8]=/opt/jdk/bin/java)
 T0=$(date +%s)
 stamp() { echo "$(( $(date +%s) - T0 ))s $*" | tee -a /out/timing.txt; }
@@ -27,7 +29,7 @@ done
 for i in $(seq 1 180); do grep -q 'Done (' /rig/repro263/console.log && break; sleep 1; done
 stamp "server: $(grep -o 'Done ([0-9.]*s)' /rig/repro263/console.log), plugins: $(ls /rig/repro263/plugins/*.jar | xargs -n1 basename | tr '\n' ' ')"
 PAIRS=""
-for i in 1 2 3; do
+for i in $(seq 1 $N); do
   v=${VERSIONS[$((i - 1))]}
   mkdir -p /rig/mc-fuzz/$i/logs && cp /rig/options.txt /rig/mc-fuzz/$i/options.txt
   PORT=25600
@@ -45,16 +47,17 @@ for i in 1 2 3; do
   PAIRS="$PAIRS${PAIRS:+,}$i=$v"
   sleep 2
 done
-for i in $(seq 1 420); do [ "$(grep -c 'joined the game' /rig/repro263/console.log)" -ge 3 ] && break; sleep 1; done
+for i in $(seq 1 420); do [ "$(grep -c 'joined the game' /rig/repro263/console.log)" -ge $N ] && break; sleep 1; done
 stamp "clients joined: $(grep -c 'joined the game' /rig/repro263/console.log) ($PAIRS); held: $(cat /out/hold*.log 2>/dev/null | grep -o 'released after.*' | tr '\n' ' ')"
 export FUZZ_FLOOR_Y=99
-cd /rig && python3 -I fuzz/fuzz.py setup 3 > /out/setup.log 2>&1
+cd /rig && python3 -I fuzz/fuzz.py setup $N > /out/setup.log 2>&1
 stamp "suite: $SUITE"
-python3 -I fuzz/suite.py $LABEL $SUITE --clients 1,2,3 --client-versions $PAIRS 2>&1 | tail -3 | tee -a /out/timing.txt
+python3 -I fuzz/suite.py $LABEL $SUITE --clients $(seq -s, 1 $N) --client-versions $PAIRS 2>&1 | tail -3 | tee -a /out/timing.txt
 stamp "done"
 cp /rig/fuzz/out/suite-*.json /rig/fuzz/out/voided.jsonl /out/ 2>/dev/null
 cp /rig/repro263/console.log /out/console.log
-for i in 1 2 3; do
+for i in $(seq 1 $N); do
   cp /rig/mc-fuzz/$i/logs/latest.log /out/client$i-latest.log 2>/dev/null
-  cp /rig/mc-fuzz/$i/crash-reports/*.txt /out/ 2>/dev/null
+  cp /rig/mc-fuzz/$i/crash-reports/*.txt /out/ 2>/dev/null || true    # no crash reports is the normal case
 done
+exit 0
