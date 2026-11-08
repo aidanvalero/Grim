@@ -66,7 +66,8 @@ import static org.mockito.Mockito.withSettings;
 // builds with the same recordings and diff the files: a refactor that changes nothing has to give the same file.
 // Self-contained and only uses Grim's event API for the offsets, so the same file compiles on 2.0 and on #2312.
 // The checks that read the wall clock are exempted on both sides, a full speed replay would trip them.
-//   REPLAY_CORPUS="common/src/test/resources/replay/rec-corpus-85d931f-c1.jsonl.gz;common/src/test/resources/replay/rec-corpus-85d931f-c2.jsonl.gz" \n//   REPLAY_OUT=ticks.tsv ./gradlew :common:cleanTest :common:test --tests "*EquivalenceReplayTest"   (then diff the two builds' files)
+//   REPLAY_CORPUS="common/src/test/resources/replay/rec-corpus-85d931f-c1.jsonl.gz;common/src/test/resources/replay/rec-corpus-85d931f-c2.jsonl.gz"
+//   REPLAY_OUT=ticks.tsv ./gradlew :common:cleanTest :common:test --tests "*EquivalenceReplayTest"   (then diff the two builds' files)
 class EquivalenceReplayTest {
     static final Pattern LINE = Pattern.compile("\"t\": ([0-9.]+), \"d\": \"(c2s|s2c)\", \"p\": \"([^\"]*)\"");
     static final Pattern MARK = Pattern.compile("FUZZ c(\\d+) s(\\d+) (start|end)");
