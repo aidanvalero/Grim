@@ -1,19 +1,20 @@
 package ac.grim.grimac.checks.impl.breaking;
 
+import ac.grim.grimac.api.storage.verbose.Verbose;
 import ac.grim.grimac.checks.Check;
 import ac.grim.grimac.checks.CheckData;
-import ac.grim.grimac.checks.type.BlockBreakCheck;
+import ac.grim.grimac.checks.impl.verbose.VerboseCodecs;
+import ac.grim.grimac.checks.type.BlockBreakListener;
+import ac.grim.grimac.checks.type.PostFlyingBlockBreakListener;
 import ac.grim.grimac.player.GrimPlayer;
 import ac.grim.grimac.utils.anticheat.update.BlockBreak;
 import ac.grim.grimac.utils.collisions.datatypes.SimpleCollisionBox;
 import ac.grim.grimac.utils.data.Pair;
-import ac.grim.grimac.utils.math.Vector3dm;
 import ac.grim.grimac.utils.nmsutil.Ray;
 import ac.grim.grimac.utils.nmsutil.ReachUtils;
 import com.github.retrooper.packetevents.protocol.attribute.Attributes;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.DiggingAction;
-import com.github.retrooper.packetevents.protocol.player.GameMode;
 import com.github.retrooper.packetevents.protocol.world.BlockFace;
 import com.github.retrooper.packetevents.util.Vector3d;
 import com.github.retrooper.packetevents.util.Vector3f;
@@ -23,8 +24,10 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-@CheckData(name = "RotationBreak", experimental = true)
-public class RotationBreak extends Check implements BlockBreakCheck {
+@CheckData(name = "RotationBreak", stableKey = "grim.breaking.rotation_break", description = "Tried to break a block without looking at it", experimental = true)
+public class RotationBreak extends Check implements BlockBreakListener, PostFlyingBlockBreakListener {
+    private static final Verbose V = Verbose.of("[pre-flying|post-flying], action={digging}");
+
     private double flagBuffer = 0; // If the player flags once, force them to play legit, or we will cancel the tick before.
     private boolean ignorePost = false;
 
@@ -34,7 +37,7 @@ public class RotationBreak extends Check implements BlockBreakCheck {
 
     @Override
     public void onBlockBreak(BlockBreak blockBreak) {
-        if (player.gamemode == GameMode.SPECTATOR)
+        if (!player.cameraEntity.isSelf())
             return; // you don't send flying packets when spectating entities
         if (player.inVehicle()) return; // falses
         if (blockBreak.action == DiggingAction.CANCELLED_DIGGING) return; // falses
@@ -42,7 +45,8 @@ public class RotationBreak extends Check implements BlockBreakCheck {
         if (flagBuffer > 0 && !didRayTraceHit(blockBreak)) {
             ignorePost = true;
             // If the player hit and has flagged this check recently
-            if (flagAndAlert("pre-flying, action=" + blockBreak.action) && shouldModifyPackets()) {
+            if (flag(V.write(verbose()).bool(true)
+                    .uint(VerboseCodecs.enumId(blockBreak.action))) && shouldModifyPackets()) {
                 blockBreak.cancel();
             }
         }
@@ -50,22 +54,23 @@ public class RotationBreak extends Check implements BlockBreakCheck {
 
     @Override
     public void onPostFlyingBlockBreak(BlockBreak blockBreak) {
-        if (player.gamemode == GameMode.SPECTATOR)
+        if (!player.cameraEntity.isSelf())
             return; // you don't send flying packets when spectating entities
         if (player.inVehicle()) return; // falses
         if (blockBreak.action == DiggingAction.CANCELLED_DIGGING) return; // falses
-
-        // Don't flag twice
-        if (ignorePost) {
-            ignorePost = false;
-            return;
-        }
 
         if (didRayTraceHit(blockBreak)) {
             flagBuffer = Math.max(0, flagBuffer - 0.1);
         } else {
             flagBuffer = 1;
-            flagAndAlert("post-flying, action=" + blockBreak.action);
+            if (!ignorePost) { // Don't flag twice
+                flag(V.write(verbose()).bool(false)
+                        .uint(VerboseCodecs.enumId(blockBreak.action)));
+            }
+        }
+
+        if (ignorePost) {
+            ignorePost = false;
         }
     }
 
@@ -111,7 +116,7 @@ public class RotationBreak extends Check implements BlockBreakCheck {
             for (Vector3f lookDir : possibleLookDirs) {
                 Vector3d starting = new Vector3d(player.x, player.y + d, player.z);
                 Ray trace = new Ray(player, starting.getX(), starting.getY(), starting.getZ(), lookDir.getX(), lookDir.getY());
-                Pair<Vector3dm, BlockFace> intercept = ReachUtils.calculateIntercept(box, trace.getOrigin(), trace.getPointAtDistance(distance));
+                Pair<Vector3d, BlockFace> intercept = ReachUtils.calculateIntercept(box, trace.origin(), trace.getPointAtDistance(distance));
 
                 if (intercept.first() != null) return true;
             }
