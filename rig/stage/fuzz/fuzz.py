@@ -28,7 +28,7 @@ OBSTACLES = ['stone_slab[type=bottom]', 'stone_slab[type=top]', 'oak_stairs[faci
              'lantern', 'chain', 'composter', 'cauldron', 'hopper', 'end_rod', 'bubble_column']
 EFFECTS = [('speed', 2), ('slowness', 1), ('jump_boost', 2), ('slow_falling', 0)]
 SPECIAL_YAWS = [-376.30127, 736.9, -123.4, 0.0, 45.0, 90.0, -90.0, 180.0]
-FLAG = re.compile(r'Grim \S+ AidanFuzz(\d+) failed (\w+) \(x(\d+)\) ?(\S*)')
+FLAG = re.compile(r'Grim \S+ AidanFuzz(\d+) failed (\w+)\*? \(x(\d+)\) ?(\S*)')   # experimental checks alert as Name*
 MARK = re.compile(r'\[Rcon\] FUZZ c(\d+) s(\d+) (start|end)')
 TIMER = {'TimerLimit', 'Timer', 'NegativeTimer'}
 
