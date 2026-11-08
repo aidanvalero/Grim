@@ -33,9 +33,16 @@ import io.github.retrooper.packetevents.impl.netty.NettyManagerImpl;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
+import com.github.retrooper.packetevents.event.EventManager;
+import com.github.retrooper.packetevents.util.LogManager;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.jetbrains.annotations.Nullable;
+
 import java.lang.reflect.Field;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.UUID;
+import java.util.logging.Level;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,6 +54,10 @@ import static org.mockito.Mockito.when;
 class HeadlessGrimPlayerTest {
 
     private static boolean ready;
+    // a real event manager, so a replay can register Grim's listeners and dispatch packets the way PacketEvents does
+    static final EventManager EVENTS = new EventManager();
+    // PacketEvents catches listener exceptions and logs them; a replay has to see them
+    static final List<String> WARNINGS = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     static synchronized void setUp() throws Exception {
         if (ready) return;
@@ -56,12 +67,34 @@ class HeadlessGrimPlayerTest {
         when(api.getServerManager()).thenReturn(server);
         when(api.getSettings()).thenReturn(new PacketEventsSettings());
         when(api.getNettyManager()).thenReturn(new NettyManagerImpl()); // real buffers, PacketEvents' static data writes NBT into them
+        when(api.getEventManager()).thenReturn(EVENTS);
+        when(api.getLogManager()).thenReturn(new LogManager(api) {
+            @Override
+            protected void log(Level level, @Nullable NamedTextColor color, String message) {
+                if (level.intValue() >= Level.WARNING.intValue()) WARNINGS.add(message);
+            }
+
+            @Override
+            public void log(Level level, net.kyori.adventure.text.ComponentLike message, Throwable throwable) {
+                if (level.intValue() >= Level.WARNING.intValue()) WARNINGS.add(String.valueOf(message) + (throwable == null ? "" : " " + throwable));
+            }
+
+            @Override
+            public void warn(String message, Throwable throwable) {
+                java.io.StringWriter trace = new java.io.StringWriter();
+                throwable.printStackTrace(new java.io.PrintWriter(trace));
+                WARNINGS.add(message + "\n" + trace.toString().lines().limit(14).collect(java.util.stream.Collectors.joining("\n")));
+            }
+        });
         PacketEvents.setAPI(api);
         // the platform: so far only the plugin's data folder, where Grim writes and reads its default config files
         PlatformLoader loader = mock(PlatformLoader.class, RETURNS_DEEP_STUBS);
         GrimPlugin plugin = mock(GrimPlugin.class, RETURNS_DEEP_STUBS);
         when(plugin.getDataFolder()).thenReturn(Files.createTempDirectory("grim-replay").toFile());
         when(loader.getPlugin()).thenReturn(plugin);
+        // alerts run their text through the platform's placeholder hook (PlaceholderAPI on Bukkit); hand it back as is
+        when(loader.getMessagePlaceHolderManager().replacePlaceholders(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
         Field field = GrimAPI.class.getDeclaredField("loader");
         field.setAccessible(true);
         field.set(GrimAPI.INSTANCE, loader);
