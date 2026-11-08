@@ -6,6 +6,14 @@ import ac.grim.grimac.manager.config.ConfigManagerFileImpl;
 import ac.grim.grimac.manager.datastore.DataStoreLifecycle;
 import ac.grim.grimac.platform.api.PlatformLoader;
 import ac.grim.grimac.checks.impl.prediction.OffsetHandler;
+import ac.grim.grimac.events.packets.CheckManagerListener;
+import com.github.retrooper.packetevents.event.PacketReceiveEvent;
+import com.github.retrooper.packetevents.netty.buffer.ByteBufHelper;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.util.EventCreationUtil;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPosition;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import ac.grim.grimac.player.GrimPlayer;
 import ac.grim.grimac.utils.anticheat.update.PositionUpdate;
 import ac.grim.grimac.utils.chunks.Column;
@@ -121,6 +129,55 @@ class HeadlessGrimPlayerTest {
         }
         System.out.print(log);
         System.out.println("worst clean offset " + worstClean + ", bent tick offset " + bent + ", Simulation violations " + simulation.violations);
+        assertTrue(worstClean < 1e-6, "clean vanilla ticks predicted exactly");
+        assertTrue(bent > 0.05 && simulation.violations > 0, "the bent tick flags Simulation");
+    }
+
+    // a serverbound position packet as the bytes a 26.3 client puts on the wire, through PacketEvents into Grim's own listener
+    static void receivePosition(CheckManagerListener listener, User user, double x, double y, double z, boolean onGround) throws Exception {
+        ByteBuf buf = Unpooled.buffer();
+        ByteBufHelper.writeVarInt(buf, PacketType.Play.Client.PLAYER_POSITION.getId(ClientVersion.V_26_3));
+        WrapperPlayClientPlayerPosition wrapper = new WrapperPlayClientPlayerPosition(new Vector3d(x, y, z), onGround);
+        wrapper.setBuffer(buf);
+        wrapper.write();
+        PacketReceiveEvent event = EventCreationUtil.createReceiveEvent(user.getChannel(), user, null, buf, true);
+        listener.onPacketReceive(event);
+    }
+
+    @Test
+    void runsFromRawPackets() throws Exception {
+        setUp();
+        User user = new User(new EmbeddedChannel(), ConnectionState.PLAY, ClientVersion.V_26_3, new UserProfile(UUID.randomUUID(), "Packets"));
+        GrimAPI.INSTANCE.getPlayerDataManager().addUser(user);           // what a join does
+        GrimPlayer player = GrimAPI.INSTANCE.getPlayerDataManager().getPlayer(user);
+        for (int cx = -1; cx <= 1; cx++) {
+            for (int cz = -1; cz <= 1; cz++) {
+                player.compensatedWorld.chunks.put(CompensatedWorld.chunkPositionToLong(cx, cz), new Column(cx, cz, new BaseChunk[16], new long[16], -1));
+            }
+        }
+        player.getSetbackTeleportUtil().hasAcceptedSpawnTeleport = true;
+        move(player, 0.5, 100, 0.5, true);                               // where the spawn teleport put it
+        OffsetHandler simulation = (OffsetHandler) player.checkManager.checks.stream().filter(c -> c instanceof OffsetHandler).findFirst().orElseThrow();
+        CheckManagerListener listener = new CheckManagerListener();
+        double y = 100, vy = 0, worstClean = 0, bent = 0;
+        StringBuilder log = new StringBuilder();
+        for (int tick = 0; tick < 20; tick++) {
+            y += vy;
+            vy = (vy - 0.08F) * 0.98F;                                     // vanilla's float gravity and drag this time
+            boolean bend = tick == 12;
+            double before = simulation.violations;
+            receivePosition(listener, user, 0.5, bend ? y + 0.1 : y, 0.5, false);
+            double offset = player.predictedVelocity.vector.distance(player.actualMovement);
+            log.append(String.format("packet tick %2d y %.6f offset %.3e%s%n", tick, player.y, offset,
+                    simulation.violations > before ? "  <- Simulation flagged" : ""));
+            if (bend) {
+                bent = offset;
+                break;
+            }
+            worstClean = Math.max(worstClean, offset);
+        }
+        System.out.print(log);
+        System.out.println("raw packets: worst clean offset " + worstClean + ", bent tick offset " + bent + ", Simulation violations " + simulation.violations);
         assertTrue(worstClean < 1e-6, "clean vanilla ticks predicted exactly");
         assertTrue(bent > 0.05 && simulation.violations > 0, "the bent tick flags Simulation");
     }
