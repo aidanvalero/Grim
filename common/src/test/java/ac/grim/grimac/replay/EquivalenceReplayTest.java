@@ -66,8 +66,9 @@ import static org.mockito.Mockito.withSettings;
 // builds with the same recordings and diff the files: a refactor that changes nothing has to give the same file.
 // Self-contained and only uses Grim's event API for the offsets, so the same file compiles on 2.0 and on #2312.
 // The checks that read the wall clock are exempted on both sides, a full speed replay would trip them.
-//   REPLAY_CORPUS="common/src/test/resources/replay/rec-corpus-85d931f-c1.jsonl.gz;common/src/test/resources/replay/rec-corpus-85d931f-c2.jsonl.gz"
-//   REPLAY_OUT=ticks.tsv ./gradlew :common:cleanTest :common:test --tests "*EquivalenceReplayTest"   (then diff the two builds' files)
+//   REPLAY_CORPUS="/replay/rec-corpus-85d931f-c1.jsonl.gz;/replay/rec-corpus-85d931f-c2.jsonl.gz" REPLAY_OUT=/tmp/ticks.tsv \
+//     ./gradlew :common:cleanTest :common:test --tests "*EquivalenceReplayTest"      then diff the two builds' files
+//   (a /replay/... path is read from test resources, anything else as a file)
 class EquivalenceReplayTest {
     static final Pattern LINE = Pattern.compile("\"t\": ([0-9.]+), \"d\": \"(c2s|s2c)\", \"p\": \"([^\"]*)\"");
     static final Pattern MARK = Pattern.compile("FUZZ c(\\d+) s(\\d+) (start|end)");
@@ -192,7 +193,8 @@ class EquivalenceReplayTest {
     static Field EXEMPT;
 
     static List<String> lines(String path) throws Exception {
-        InputStream in = Files.newInputStream(Path.of(path));
+        InputStream in = EquivalenceReplayTest.class.getResourceAsStream(path);    // /replay/... from test resources
+        if (in == null) in = Files.newInputStream(Path.of(path));
         if (path.endsWith(".gz")) in = new GZIPInputStream(in);
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
             return reader.lines().toList();
