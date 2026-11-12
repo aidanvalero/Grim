@@ -93,6 +93,21 @@ def line(client, tool, block, hold, rounds=4):
     return sc, [f'clear {p}', items], [f'clear {p}', items]
 
 
+def hit_villager(client, dist):
+    # 11-12: upstream 2f785fd (a vector allocation cleanup pushed straight to 2.0) made Reach compare the squared distance.
+    # PC rig, 26.3: a villager whose near face is 2.5 blocks from the eyes flagged Reach 6.24650 on 6/6 hits (2.9:
+    # 8.40594, 1.9: 3.60734), 0/24 on e457d55 and on the fix (#3017, merged as a10bbf8). Standing still, looking straight
+    # ahead, three left clicks through Minecraft.startAttack. NoAI and Invulnerable so it stays put and takes every hit
+    ox, oz = fuzz.origin(client)
+    tag = f'rv{client}'
+    z = oz + 0.5 + dist + 0.3          # a villager is 0.6 wide: its near face is 0.3 in front of its centre
+    nbt = '{NoAI:1b,Silent:1b,Invulnerable:1b,Tags:["%s"]}' % tag
+    ev = [(2, 'rcon', f'summon minecraft:villager {ox + 0.5} {fuzz.FLOOR_Y + 1} {z:.2f} {nbt}'),
+          (14, 'startattack', ''), (24, 'startattack', ''), (34, 'startattack', '')]
+    sc = {'build': [], 'effects': [], 'yaw': 0.0, 'ticks': 44, 'events': ev}
+    return sc, [f'kill @e[tag={tag}]'], [f'kill @e[tag={tag}]']
+
+
 def plain(sc):
     return lambda client: (dict(sc), [], [])
 
@@ -120,6 +135,10 @@ CASES = {
                    (57, 'up', 'sneak'), (57, 'up', 'sprint')]}),
         'expect': 'Simulation on 2.0, no fix yet'},
     'scaffold-refused': {'make': scaffold_refused, 'expect': 'Simulation on 2.0 some runs until #3004 merges (#2961)'},
+    # combat, so a change to Reach shows up here: the random seeds and every case above are movement or digging only,
+    # which is why a replay of them matched to the last digit on the commit that broke Reach (11-12)
+    'reach-villager-2.5': {'make': lambda c: hit_villager(c, 2.5), 'expect': '0 on every build (Reach on 2f785fd only, #3017)'},
+    'reach-villager-2.9': {'make': lambda c: hit_villager(c, 2.9), 'expect': '0 on every build (Reach on 2f785fd only, #3017)'},
     # old clients through ViaBackwards, all on the PC rig first (fastbreak_sweep.py). #2858: end stone bricks and the
     # wall 1.14 added were 0.8 hardness up to 1.14.4 and grim used 3, so every block flagged (1.14.4, iron pick: 41
     # FastBreak in 3/3 runs). Fixed by #3005

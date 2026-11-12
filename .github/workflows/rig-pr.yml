@@ -17,6 +17,7 @@ on:
       base: {description: 'Grim commit or branch to apply it on', default: '2.0'}
       pr_sha: {description: 'pin the PR head (blank = its current head)', default: ''}
       runs: {description: 'runs per seed', default: '2'}
+      gate: {description: 'true = fail the run when a check flags more on the newer build and holds up in the reruns', default: 'false'}
 permissions:
   contents: read
 env:
@@ -25,6 +26,7 @@ env:
   BASE: ${{ github.event_name == 'push' && 'eb4c657ca17f60ae89c84c6c13ff6eb2505e4917' || inputs.base }}
   PR_SHA: ${{ github.event_name == 'push' && '085ac5e89df0751cd039021b4b5ad6682a8e2fbd' || inputs.pr_sha }}
   RUNS: ${{ inputs.runs || '2' }}
+  GATE: ${{ inputs.gate || 'false' }}
   PAPER_SHA256: a0a58f532f08054ea92eb916d3edb6ed3c86429d77175317304f6e995cce9968
 jobs:
   jars:
@@ -175,3 +177,14 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with: {name: verdict, path: rig/stage/fuzz/out/}
+      - name: gate, nothing may flag more on the newer build
+        # 11-12, for cobweb\rig-watch-head.ps1 on the PC: it starts this workflow with pr=GrimAnticheat/Grim:2.0, base=the
+        # head it saw last and gate=true every time upstream 2.0 moves, so a red run means that push made something flag
+        if: env.GATE == 'true'
+        run: |
+          NEW=$(cat rig/stage/fuzz/out/suite-diff-pr.new)
+          if [ "$NEW" != 0 ]; then
+            echo "::error::$NEW check(s) flag more on $PR_SHA than on $BASE, see the verdict in the summary"
+            exit 1
+          fi
+          echo "nothing flags more on the newer build"

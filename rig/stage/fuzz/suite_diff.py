@@ -137,5 +137,7 @@ for name, rows in (('New on the PR', new), ('Gone on the PR', gone), ('Noisy', n
         lines.append('')
 path = os.path.join(fuzz.OUT, f'suite-diff-{a.pr}.md')
 open(path, 'w', encoding='utf-8').write('\n'.join(lines))
+# how many checks flag more on the newer build and held up in the reruns: what a gate (rig-pr.yml, gate=true) fails on
+open(os.path.join(fuzz.OUT, f'suite-diff-{a.pr}.new'), 'w').write(str(len(new)))
 print('\n'.join(lines[:16]))
 print('report:', path)
