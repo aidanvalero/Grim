@@ -1,0 +1,46 @@
+# 11-13: the lily pad thread from #on-topic. The test, the recording and the patch are on the branch replay/useitem of
+# this fork (this file is here because the rig's workflows all live on the rig branch). One vanilla 26.3 session recorded at the wire (test resources,
+# rec-lilypad-cdf8: a normal lily pad place, look at the water then flick up and right-click on the same tick, on the
+# horizon then flick down and right-click on the same tick, twice each) replayed through Grim's listeners on 2.0 cdf8a28
+# and with replay-ci/use-item-rotation.patch on top, as it arrived and with everything after each use item 30 ms
+# later. No packet is changed. UseItemLookReplayTest prints where Grim's own world has a lily pad after each use item.
+name: rig-replay
+on:
+  push:
+    branches: [rig]
+    paths: ['.github/workflows/rig-replay.yml']
+  workflow_dispatch:
+    inputs:
+      ref: {description: 'branch on this fork with the replay test, the recording and replay-ci/use-item-rotation.patch', default: 'replay/useitem'}
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [stock, fix]
+        round: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false, ref: "${{ inputs.ref || 'replay/useitem' }}"}
+      - uses: actions/setup-java@v5
+        with: {java-version: '25', distribution: temurin}
+      - uses: gradle/actions/setup-gradle@v6
+        with: {cache-read-only: true}
+      - name: the fix on top
+        if: matrix.build == 'fix'
+        run: git apply replay-ci/use-item-rotation.patch && git diff --stat
+      - name: replay, as it arrived and 30 ms late
+        env:
+          REPLAY_RECORDING: /replay/rec-lilypad-cdf8.jsonl.gz
+        run: |
+          for gap in 0 30; do
+            REPLAY_USEITEM_GAP_MS=$gap REPLAY_OUT="$PWD/report-${{ matrix.build }}-gap$gap.txt"               ./gradlew :common:cleanTest :common:test --tests '*UseItemLookReplayTest' --no-daemon --console=plain
+            { echo "### ${{ matrix.build }}, gap $gap ms, round ${{ matrix.round }}"; echo '```'; cat "report-${{ matrix.build }}-gap$gap.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'report-${{ matrix.build }}-${{ matrix.round }}', path: 'report-*.txt'}
