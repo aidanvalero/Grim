@@ -338,12 +338,14 @@ public class CheckManager implements BasicReloadable {
         for (PacketReceiveListener check : packetReceiveListeners) {
             check.onPacketReceive(packet);
         }
+        packetHandlerRegistry.handleReceive(packet);
     }
 
     public void onPreViaPacketReceive(final PacketReceiveEvent packet) {
         for (PreViaPacketReceiveListener check : preViaPacketReceiveListeners) {
             check.onPreViaPacketReceive(packet);
         }
+        packetHandlerRegistry.handlePreViaReceive(packet);
     }
 
     public void onPacketSend(final PacketSendEvent packet) {
